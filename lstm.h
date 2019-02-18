@@ -31,112 +31,6 @@ namespace lstm
         }                                                                              \
     }
 
-class rnncell
-{
-  protected:
-    XTensor H, Y, X;
-
-  protected:
-    XTensor W, Wy, Wi, mid0, mid1, mid2;
-
-    /*all inputs, all outputs*/
-  protected:
-    XTensor output;
-
-    /**/
-  public:
-    int embSize;
-
-    rnncell(int myembSize = 32, std::string weightInitializer = "rand")
-    {
-        embSize = myembSize;
-        InitTensor2D(&output, 0, embSize);
-        InitTensor2D(&W, embSize, embSize);
-        InitTensor2D(&Wy, embSize, embSize);
-        InitTensor2D(&Wi, embSize, embSize);
-        InitTensor2D(&H, 1, embSize);
-        InitTensor2D(&Y, 1, embSize);
-        InitTensor2D(&X, 1, embSize);
-        InitTensor2D(&mid0, 0, embSize);
-        InitTensor2D(&mid1, 1, embSize);
-        InitTensor2D(&mid2, 1, embSize);
-        if (weightInitializer == "zero")
-        {
-            _SetDataFixedFloat(&W, 0.0);
-            _SetDataFixedFloat(&Wy, 0.0);
-            _SetDataFixedFloat(&Wi, 0.0);
-        }
-        else if (weightInitializer == "rand")
-        {
-            _SetDataRand(&W, 0.0, 1.0);
-            _SetDataRand(&Wy, 0.0, 1.0);
-            _SetDataRand(&Wi, 0.0, 1.0);
-        }
-        else
-        {
-            ShowErrors("Unable to find indicated weightInitializer.");
-        }
-    }
-
-    /**/
-  public:
-    XTensor Recur()
-    {
-        char ch = '-';
-        //XPRINT1(0, stderr,"1%c",ch);
-        mid0 = MatrixMul(&H, X_NOTRANS, &W, X_NOTRANS);
-        mid1 = MatrixMul(&X, X_NOTRANS, &Wi, X_NOTRANS);
-        mid2 = Sum(&mid0, &mid1);
-        H = HardTanH(&mid2);
-        Y = Sigmoid(&H);
-    }
-
-    /**/
-  public:
-    void update(float learningRate)
-    {
-        char ch = '-';
-        //XPRINT1(0, stderr,"80%c",ch);
-        if (W.grad != NULL)
-            _Sum(&W, W.grad, &W, -learningRate);
-        //else XPRINT1(0, stderr,"81%c",ch);
-        if (Wi.grad != NULL)
-            _Sum(&Wi, Wi.grad, &Wi, -learningRate);
-        if (Wy.grad != NULL)
-            _Sum(&Wy, Wy.grad, &Wy, -learningRate);
-    }
-
-    /**/
-  public:
-    void partClear()
-    {
-        InitTensor2D(&output, 0, embSize);
-        if (W.grad != NULL)
-            _SetDataFixedFloat(W.grad, 0.0);
-        if (Wi.grad != NULL)
-            _SetDataFixedFloat(Wi.grad, 0.0);
-        if (Wy.grad != NULL)
-            _SetDataFixedFloat(Wy.grad, 0.0);
-    }
-
-    /**/
-  public:
-    void back(XTensor y, bool isLast = false)
-    {
-        if (isLast)
-        {
-            H.grad = new XTensor;
-            Y.grad = new XTensor;
-            X.grad = new XTensor;
-            W.grad = new XTensor;
-            Wi.grad = new XTensor;
-            Wy.grad = new XTensor;
-            _SetDataFixedFloat(&H, 0.0);
-        }
-        /*TO DO*/
-    }
-};
-
 /*one simple lstm cell*/
 class lstmcell
 {
@@ -204,6 +98,11 @@ class lstmcell
         }
     }
 
+	~lstmcell()
+	{
+		XPRINT(0, stderr, "cell destructed");
+	}
+
     void setX(XTensor &toX)
     {
         X = Sum(toX,mid2);
@@ -218,51 +117,58 @@ class lstmcell
     {
         return &Y;
     }
-    /**/
+    
+	/*skr the cell(recurrence)!*/
     void Recur()
     {
-		//char ch = '-';
 		smallList.Clear();
         smallList.Add(&H);
         smallList.Add(&X);
-        mid0 = Merge(smallList, 1);//error when unitnum!=embsize
-		//XPRINT1(0, stderr, "3%c", ch);
+        mid0 = Merge(smallList, 1);//error when H's size is not euqual to X's, when unitnum!=embsize
         Z = MatrixMul(mid0, X_NOTRANS, W, X_NOTRANS);
         Z = HardTanH(Z);
         Zi = MatrixMul(mid0, X_NOTRANS, Wi, X_NOTRANS);
         Zi = Sigmoid(Zi);
         Zf = MatrixMul(mid0, X_NOTRANS, Wf, X_NOTRANS);
-		//XPRINT1(0, stderr, "4%c", ch);
         Zf = Sigmoid(Zf);
-		//XPRINT1(0, stderr, "41%c", ch);
         Zo = MatrixMul(mid0, X_NOTRANS, Wo, X_NOTRANS);
-		//XPRINT1(0, stderr, "42%c", ch);
         Zo = Sigmoid(Zo);
-		//XPRINT1(0, stderr, "5%c", ch);
         mid10 = Multiply(C, Zf);
         mid11 = Multiply(Zi, Z);
         C = Sum(mid10, mid11);
         mid10 = HardTanH(C);
-		//XPRINT1(0, stderr, "60%c", ch);
 		H = Multiply(Zo,mid10);
-		//XPRINT1(0, stderr, "61%c", ch);
         Y = Sigmoid(MatrixMul(H, X_NOTRANS, Wy, X_NOTRANS));
-		//XPRINT1(0, stderr, "7%c", ch);
     }
 
-    void update()
+	/*update*/
+    void update(std::string optMethod="default",float optParam1=0)
     {
-		if (W.grad != NULL)
+		XList list;
+		list.Add(&W);
+		list.Add(&Wi);
+		list.Add(&Wf);
+		list.Add(&Wo);
+		list.Add(&Wy);
+		if (optMethod == "default")
 		{
-			_Sum(&W, W.grad, &W, -learningRate);
-			/*float wwww[64][32];
-			for (int i = 0; i < 64; i++)
+			for (int i = 0; i < list.count; i++)
 			{
-				for (int j = 0; j < 32; j++)
-					wwww[i][j]=W.grad->Get2D(i, j);
-			}*/
+				XTensor* para = (XTensor*)list.GetItem(i);
+				_Sum(para, para->grad, para, -learningRate);
+			}
 		}
-					
+		if (optMethod == "momentum")
+		{
+			for (int i = 0; i < list.count; i++)
+			{
+				XTensor* para = (XTensor*)list.GetItem(i);
+				_Sum(para->grad, para->grad, para->grad, optParam1 - 1.0);
+				_Sum(para, para->grad, para, -learningRate);
+			}
+		}
+		/*if (W.grad != NULL)
+			_Sum(&W, W.grad, &W, -learningRate);					
         if (Wi.grad != NULL)
             _Sum(&Wi, Wi.grad, &Wi, -learningRate);
         if (Wf.grad != NULL)
@@ -270,10 +176,10 @@ class lstmcell
         if (Wo.grad != NULL)
             _Sum(&Wo, Wo.grad, &Wo, -learningRate);
         if (Wy.grad != NULL)
-            _Sum(&Wy, Wy.grad, &Wy, -learningRate);
+            _Sum(&Wy, Wy.grad, &Wy, -learningRate);*/
     }
 
-    /**/
+    /*clear needed part*/
     void partClear()
     {
         if (H.grad != NULL)
@@ -316,6 +222,25 @@ class lstmcell
 		C = HardTanH(mid2);
     }
 
+	/*save parameters to file*/
+	void dump(FILE* file)
+	{
+		W.Dump(file, "W");
+		Wi.Dump(file, "Wi");
+		Wf.Dump(file, "Wf");
+		Wo.Dump(file, "Wo");
+		Wy.Dump(file, "Wy");
+	}
+
+	/*load parameters from file*/
+	void read(FILE* file)
+	{
+		W.Read(file, "W");
+		Wi.Read(file, "Wi");
+		Wf.Read(file, "Wf");
+		Wo.Read(file, "Wo");
+		Wy.Read(file, "Wy");
+	}
 };
 
 class lstmnet
@@ -324,7 +249,7 @@ class lstmnet
     XTensor **input,*batchInput;
     XTensor word2vec, vec2word;
     int layerNum, batchSize, epochs;
-    lstmcell *layer0, *layer1, *layer2, *layer3;
+    lstmcell *layer0, *layer1,*layer2,*layer3;
     int dataSize,wordNum, unitNum,embSize, maxLen, devId;
     XList outputList, goldList;
     XTensor *finalOutputs,*finalInputs;
@@ -333,57 +258,135 @@ class lstmnet
 	float learningRate,limitForEarlyStop;
 	/*amount of batch left for validation, the number for early stopping*/
 	int useValidation,earlyStop;
-	std::string biMode,infoPath;
+	std::string infoPath,lrMethod,optMethod;
+	float lrParam1, lrParam2, lrParam3, lrParam4;
+	float optParam1, optParam2;
+	XNet autoDiffer;
 
   public:
     /*one-layer, more layers to do
-	use_gpu:	i>1 for gpu(device i),0 for cpu;
-	wm:			wordNum,number of word(in another word,size of vocabulary);
-	emb:		size of embedding;
-	eph:		number of traning epoch;
-	batchSz:	size of a batch;
-	lrRate:		learning rate;
-	weightInitializer:"zero" for zero,"rand" for random(-1.0,1.0);
-	ldDtInBatch:if load data in batch size while training;
-	useVld:		amount of batches left for validation;
-	isSufl:		if shuffle the data
+	**use_gpu:	i>1 for gpu(device i),0 for cpu;
+	**wm:			wordNum,number of word(in another word,size of vocabulary);
+	**emb:		size of embedding;
+	**eph:		number of traning epoch;
+	**batchSz:	size of a batch;
+	**lrRate:		learning rate;
+	**weightInitializer:"zero" for zero,"rand" for random(-1.0,1.0);
+	**ldDtInBatch:if load data in batch size while training;
+	**useVld:		amount of batches left for validation;
+	**isSufl:		if shuffle the data
+	**layerNum:		lstm layer number
 	*/
-    lstmnet(int use_gpu, int wm = 1024, int um = 32, int emb = 32, int eph = 1, int batchSz = 128, float lrRate = 0.001, std::string weightInitializer = "rand", bool LdDtInBatch=true,int usVld=4, bool isSufl = false,std::string ifPh="" )
+    lstmnet(int use_gpu=0, int wm = 1024, int um = 32, int emb = 32, int eph = 1, int batchSz = 128, float lrRate = 0.001, std::string weightInitializer = "rand", bool LdDtInBatch=true,int usVld=2, bool isSufl = false,std::string ifPh="" ,int lyNm=1)
     {
-        char ch = '-';
         devId = use_gpu - 1;
         wordNum = wm;
         embSize = emb;
-        layer0 = new lstmcell(devId, emb, um,weightInitializer, batchSz, lrRate);
         unitNum = um;
-        layerNum = 1;
         epochs = eph;
+		batchSize = batchSz;
+		learningRate=lrRate;
 		loadDataInBatch = LdDtInBatch;
 		useValidation = usVld;
+		isShuffle = isSufl;
 		infoPath = ifPh;
-		earlyStop = 0;
-		limitForEarlyStop = 0.0;
-        batchSize = batchSz;
-		learningRate=lrRate;
-        isShuffle = isSufl;
+        layerNum = lyNm;
         InitTensor2D(&word2vec, wordNum, embSize, X_FLOAT,devId);
         _SetDataRand(&word2vec, -1.0, 1.0);
 		InitTensor2D(&vec2word, embSize, wordNum, X_FLOAT, devId);
 		_SetDataRand(&vec2word, -1.0, 1.0);
+		if (layerNum>0)layer0 = new lstmcell(devId, embSize, unitNum, weightInitializer, batchSize, learningRate);
+		if (layerNum>1)layer1 = new lstmcell(devId, embSize, unitNum, weightInitializer, batchSize, learningRate);
+		if (layerNum>2)layer2 = new lstmcell(devId, embSize, unitNum, weightInitializer, batchSize, learningRate);
+		if (layerNum>3)layer3 = new lstmcell(devId, embSize, unitNum, weightInitializer, batchSize, learningRate);
+		earlyStop = 0;
+		limitForEarlyStop = 0.0;
+		lrMethod = "default";
+		optMethod = "default";
     }
-	/*set parameters for stop training. If you need this, please set before training*/
+	
+	~lstmnet()
+	{
+		delete[] batchInput;
+		delete[] finalOutputs;
+		delete[] finalInputs;
+		if (layerNum>0)delete layer0;
+		if (layerNum>1)delete layer1;
+		if (layerNum>2)delete layer2;
+		if (layerNum>3)delete layer3;
+		XPRINT(0, stderr, "net destructed");
+	}
+	
+	/*set method of updating learning rate online*/
+	/*details follow https://blog.csdn.net/langb2014/article/details/51274376*/
+	void setLearningRate(std::string method ="default",float param1=0, float param2=0,float param3=0)
+	{
+		lrMethod = method;
+		if (method == "default")return;
+		if (method == "exp")//start quick, end slow, consective##lr=lr*pow(param1,1.0/param2) or lr=learningRate*pow(param1,step/param2)
+		{
+			if (param2 == 0 && param1 == 0)
+				lrParam1 = 0.9999;
+			else
+				lrParam1 = pow(param1, 1.0 / param2);
+		}
+		if (method == "step")//start quick, end slow, consecutive##lr=learningRate*pow(param1,floor(step/param2)
+		{
+			if (param1 == 0)
+				lrParam1 = 0.99;
+			else	
+				lrParam1 = param1;
+			if (param2 == 0)
+				lrParam2 = 1000;
+			else
+				lrParam2 = param2;
+			lrParam3 = 0;
+		}
+		if (method == "inv")//start quick, end slow,consecutive##lr=learningRate*(1+param1*step)^(-param2)
+		{
+			if (param1 == 0)
+				lrParam1 = 0.0001;
+			else
+				lrParam1 = param1;
+			if (param2 == 0)
+				lrParam2 = 0.75;
+			else
+				lrParam2 = param2;
+			lrParam3 = 0;
+			lrParam4 = learningRate;
+
+		}
+	}
+	
+	/*set method of optimizer for updating*/
+	void setOptimizer(std::string method="default",float param1=0,float param2=0)
+	{
+		optMethod = method;
+		if (optMethod == "default")return;
+		if (optMethod == "momentum")
+		{
+			optParam1 = param1;
+		}
+
+	}
+
+	/*set parameters for stop training. If you need this, please set before training
+	**auto stop when loss change is smaller than "limitForEarlyStop" for more than "earlyStop" consecutive epochs
+	*/
 	void setStop(int elyStp = 0, float limit = 0.0)
 	{
 		earlyStop = elyStp;
 		limitForEarlyStop = limit;
 	}
 	
-	/*read all data at one time, quicker but need much more memory*/
+	/*read all data at one time, quicker but need much more memory
+	**have not been updated for a while, strongly not recommend
+	*/
 	void setInput(std::string inPh, int dtSz,int minLength,int maxLength)
 	{
 		dataSize = dtSz;
 		maxLen = maxLength;
-		if (loadDataInBatch)batchInput = new XTensor[maxLen];
+		/*initialize xtensor about data for training period*/
 		finalOutputs = new XTensor[maxLen];
 		for (int i = 0; i < maxLen; ++i)
 			InitTensor2D(&finalOutputs[i], batchSize, wordNum, X_FLOAT, devId);
@@ -400,8 +403,10 @@ class lstmnet
 				_SetDataFixedFloat(&input[i][j], 0.0);
 			}
 		}
+		/*open input file*/
 		freopen(inPh.c_str(), "r", stdin);
 		int batchNum=0,num=0,snum=0,token;
+		/*load data*/
 		while (scanf("%d", &token) != EOF)
 		{
 			if (num >= batchSize)
@@ -431,12 +436,19 @@ class lstmnet
 		}
 	}
     
-	/*transform input data into batch size, one file for one batch, which prepare for batch input, memory needed depends on batchSizewwwww*/
-	void setBatchInput(std::string inPh, int dtSz, int minLength, int maxLength)
+	/*transform input data into batch size, one file for one batch, which prepare for batch input, memory needed depends on batchSize
+	**inPh:path of input data
+	**dtSz:number of sentence to be loaded
+	**maxLength:maximum length of a sentence(the extra length will be cut)
+	**minLength:minimum length of a sentence(the sentence shorter than this limit will not be used)
+	**forTest:if the data is set for test. if true, the output stream will not be redirected
+	*/
+	void setBatchInput(std::string inPh, int dtSz, int minLength, int maxLength,bool forTest=false)
 	{
 		dataSize = dtSz;
 		maxLen = maxLength;
-		if (loadDataInBatch)batchInput = new XTensor[maxLen];
+		/*initialize xtensor about data for training period*/
+		batchInput = new XTensor[maxLen];
 		finalOutputs = new XTensor[maxLen];
 		finalInputs = new XTensor[maxLen];
 		for (int i = 0; i < maxLen; ++i)
@@ -444,7 +456,7 @@ class lstmnet
 		char outPh[20];
 		int outIdx[8192];//if there are more than 8192 batches, please edit here
 		int sentence[8192];//if the maxlength of sentence is more than 8192, please edit here
-		int wordCount[10005];
+		int wordCount[10005];//record word frequency
 		int batchNum = 0, num = 0, snum = 0, token;
 		memset(wordCount, 0, sizeof(wordCount));
 		freopen(inPh.c_str(), "r", stdin);
@@ -478,7 +490,7 @@ class lstmnet
 					}
 					for (int i = 0; i < maxLength; i++)
 					{
-						if (wordCount[sentence[i]] > 20)//delete words that seldom appears 
+						if (wordCount[sentence[i]] > 20)//replace words with extremely low frequency 
 							printf("%d ", sentence[i]);
 						else
 							printf("2 ");
@@ -494,7 +506,6 @@ class lstmnet
 			{
 				if (token >= wordNum)token = 2;
 				sentence[snum] = token;
-				//printf("%d ", token);
 				snum++;
 			}
 		}
@@ -502,29 +513,33 @@ class lstmnet
 		if (infoPath == "")
 			freopen("CON", "w", stdout);//redirect to console
 		else
+			if (forTest)infoPath = "test_" + infoPath;
 			freopen(infoPath.c_str(), "w", stdout);
 		#else
 		if (infoPath == "")
 			freopen("/dev/tty", "w", stdout);
 		else
+			if (forTest)infoPath = "test_" + infoPath;
 			freopen(infoPath.c_str(), "w", stdout);
 		#endif
 	}
 
-	/*read the data of designated batchnum, Xtensor:array maxLength of batchSize*wordNum (must call setBatchInput() first)*/
+	/*read the data of designated batchnum, Xtensor:array maxLength of batchSize*wordNum (must call setBatchInput() first)
+	**load the "batchNum"th batch into "batchData"
+	*/
 	void getBatchInput(int batchNum,XTensor* batchData)
 	{
 		char inPh[20];
-		int i, j, k,t;
+		int k;
 		sprintf(inPh, "data_batch_%d.txt", batchNum);
 		freopen(inPh, "r", stdin);
-		for (i = 0; i < maxLen; ++i)
+		for (int i = 0; i < maxLen; ++i)
 		{
 			InitTensor2D(&batchData[i], batchSize, wordNum,X_FLOAT,devId);
 			_SetDataFixedFloat(&batchData[i], 0.0);
 		}
-		for(j=0;j<batchSize;++j)
-			for(i=0;i<maxLen;++i)
+		for(int j=0;j<batchSize;++j)
+			for(int i=0;i<maxLen;++i)
 			{
 				scanf("%d", &k);
 				batchData[i].Set2D(1.0, j, k);
@@ -540,18 +555,56 @@ class lstmnet
 		mid2 = ReduceSum(mid1, 1);
 		mid2.Reshape(2, dims);
 		mid3 = ReduceSum(mid2, 1);
-		return mid3.Get1D(0);
-		
+		return mid3.Get1D(0);	
 	}
+
+	/*update all(learning rate as well)*/
 	void update()
 	{
-		if (layer0 != NULL)layer0->update();
-		if (word2vec.grad != NULL)
-			_Sum(&word2vec, word2vec.grad, &word2vec, -learningRate);
-		if (vec2word.grad != NULL)
-			_Sum(&vec2word, vec2word.grad, &vec2word, -learningRate);
+		if (lrMethod == "exp")
+		{
+			learningRate *= lrParam1;
+		}
+		if (lrMethod == "step")
+		{
+			lrParam3++;
+			if (lrParam3 >= lrParam2)
+			{
+				lrParam3 = 0;
+				learningRate *= lrParam1;
+			}
+		}
+		if (lrMethod == "inv")
+		{
+			lrParam3++;
+			learningRate = lrParam4*pow(1.0 + lrParam1*lrParam3, -lrParam2);
+		}
+		if (layer0 != NULL)layer0->update(optMethod,optParam1);
+		if (optMethod == "default")
+		{
+			if (word2vec.grad != NULL)
+				_Sum(&word2vec, word2vec.grad, &word2vec, -learningRate);
+			if (vec2word.grad != NULL)
+				_Sum(&vec2word, vec2word.grad, &vec2word, -learningRate);
+		}
+		if (optMethod == "momentum")
+		{
+			if (word2vec.grad != NULL)
+			{
+				_Sum(word2vec.grad, word2vec.grad, word2vec.grad, optParam1 - 1.0);
+				_Sum(&word2vec, word2vec.grad, &word2vec, -learningRate);
+			}
+			if (vec2word.grad != NULL)
+			{
+				_Sum(vec2word.grad, vec2word.grad, vec2word.grad, optParam1 - 1.0);
+				_Sum(&vec2word, vec2word.grad, &vec2word, -learningRate);
+			}
+		}
+		
 
 	}
+
+	/*clear needed part*/
 	void partClear()
 	{
 		if (layer0 != NULL)layer0->partClear();
@@ -560,169 +613,46 @@ class lstmnet
 		if (vec2word.grad != NULL)
 			vec2word.grad->SetZeroAll();
 	}
+
+	/*clear and retrain model
+	**MAY NOT WORK ON LINUX!
+	*/
+	void retrain()
+	{
+		XPRINT(0, stderr, "loss is too high, retrain start\n");
+		InitTensor2D(&word2vec, wordNum, embSize, X_FLOAT, devId);
+		_SetDataRand(&word2vec, -1.0, 1.0);
+		InitTensor2D(&vec2word, embSize, wordNum, X_FLOAT, devId);
+		_SetDataRand(&vec2word, -1.0, 1.0);
+		delete layer0;
+		XPRINT(0, stderr, "e");
+		layer0 = new lstmcell(devId, embSize, unitNum, "rand", batchSize, learningRate);
+		XPRINT(0, stderr, "f");
+		train();
+	}
+
 	/*train model*/
     void train()
     {
-        char ch = '-';
         XTensor middle,finalInput;
-        XNet autoDiffer;
         float loss,avgloss,pastloss[8192];//if the number of batches is more than 8192, please edit here;
-        double startT = GetClockSec();
+        double startT = GetClockSec(),dT=0,nowT=0;
+		/*iterate epoch*/
         for (int epochNum = 0; epochNum < epochs; epochNum++)
         {
 			avgloss = 0;
+			/*iterate batch*/
             for (int batchNum = 0; batchNum < dataSize / batchSize-useValidation; batchNum++)
             {
                 loss = 0;
                 goldList.Clear();
                 outputList.Clear();
-				//XPRINT1(0, stderr, "0%c", ch);
 				if (loadDataInBatch)getBatchInput(batchNum, batchInput);
-                if (layerNum == 1)
-                {
-                    for (int i = 0; i < maxLen; ++i)
-					{
-						//XPRINT1(0, stderr, "1%c", ch);
-						if(finalInputs[i].grad!=NULL)finalInputs[i].grad->SetZeroAll();//finalInputs[i]:batchSize*embSize
-                        if(loadDataInBatch)
-							finalInputs[i] = Sigmoid(MatrixMul(batchInput[i], X_NOTRANS, word2vec, X_NOTRANS));
-						else
-							finalInputs[i] = Sigmoid(MatrixMul(input[batchNum][i], X_NOTRANS, word2vec, X_NOTRANS));
-                        layer0->setX(finalInputs[i]);
-                        if (i > 3)
-                        {
-							//XPRINT1(0, stderr,"%.3f\n", _CrossEntropyFast(layer0->getYpointer(), &finalInputs[i]));
-                            //loss += _CrossEntropyFast(layer0->getYpointer(), &finalInputs[i], REDUCE_SUM);
-							//loss += _CrossEntropyFast(&finalOutputs[i - 1], &batchInput[i], REDUCE_MEAN);
-							loss -= countLoss(middle, batchInput[i]);
-							//goldList.Add(&finalInputs[i]);
-							goldList.Add(&batchInput[i]);
-							/*float w[10][10000];
-							for (int ii = 0; ii < 10; ++ii)
-								for (int jj = 0; jj < wordNum; ++jj)
-									w[ii][jj] = finalOutputs[i-1].Get2D(ii, jj);
-							float ww[128][32];
-							for (int ii = 0; ii < 10; ++ii)
-								for (int jj = 0; jj < wordNum; ++jj)
-									ww[ii][jj] = batchInput[i].Get2D(ii, jj);
-							int www;
-							www = 1;*/
-                        }
-						//XPRINT1(0, stderr, "2%c", ch);
-						if (i < maxLen - 1)
-						{
-							layer0->Recur();
-							if (i > 2)
-							{
-								layer0->getYcopy(finalOutputs[i]);//finalOutpus[i]:batchSize*embSize->batchSize*wordNum
-								finalOutputs[i] = MatrixMul(finalOutputs[i], X_NOTRANS, vec2word, X_NOTRANS);
-								middle = LogSoftmax(finalOutputs[i], 1);
-								finalOutputs[i] = LogSoftmax(finalOutputs[i], 1);
-								outputList.Add(&finalOutputs[i]);
-							}
-						}   
-                        //XPRINT1(0, stderr,"8%c",ch);
-                    }
-					autoDiffer.Backward(outputList, goldList, CROSSENTROPY);
-					//autoDiffer.ShowNetwork(stderr, &finalOutputs[0]);
-					//XPRINT1(0, stderr,"9%c",ch);
-					this->update();
-					this->partClear();
-                }
-                else
-                {
-                    /*TO DO*/
-                }
-				loss /= (float)((maxLen - 4)*(batchSize));
-				avgloss += loss;
-                XPRINT5(0, stderr, "[INFO] elapsed=%.1fs, epoch=%d, batch=%d/%d, prob=%.5f\n", GetClockSec() - startT, epochNum + 1, batchNum + 1, dataSize / batchSize-useValidation, exp(loss) );
-            }
-			pastloss[epochNum] = exp(avgloss / (dataSize / batchSize - useValidation));
-			printf("[INFO] epoch = %d, prob = %.5f\n", epochNum + 1, exp(avgloss / (dataSize / batchSize - useValidation)));
-			XPRINT2(0,stderr,"[INFO] epoch=%d, prob=%.5f\n", epochNum + 1, exp(avgloss / (dataSize / batchSize-useValidation)));
-			validate();
-			if (epochNum > earlyStop)
-			{
-				bool nearSame = true;
-				for(int ii=epochNum-earlyStop;ii<=epochNum;++ii)
-					for (int jj = ii + 1; jj < epochNum; ++jj)
-					{
-						if (fabs(preloss[ii] - preloss[jj]) > limitForEarlyStop)
-							nearSame = false;
-					}
-				if (nearSame)break;
-			}
-        }
-    }
-	
-	/**/
-	void validate()
-	{
-		XTensor middleInput, finalInput,middle;
-		float loss = 0.0;
-		for (int batchNum = dataSize / batchSize - useValidation; batchNum < dataSize / batchSize; ++batchNum)
-		{
-            goldList.Clear();
-            outputList.Clear();
-			if (loadDataInBatch)getBatchInput(batchNum, batchInput);
-			if (layerNum == 1)
-			{
-				for (int i = 0; i < maxLen; ++i)
-				{
-					//XPRINT1(0, stderr, "1%c", ch);
-					if(finalInputs[i].grad!=NULL)finalInputs[i].grad->SetZeroAll();//finalInputs[i]:batchSize*embSize
-					if(loadDataInBatch)
-						finalInputs[i] = Sigmoid(MatrixMul(batchInput[i], X_NOTRANS, word2vec, X_NOTRANS));
-					else
-						finalInputs[i] = Sigmoid(MatrixMul(input[batchNum][i], X_NOTRANS, word2vec, X_NOTRANS));
-					layer0->setX(finalInputs[i]);
-					if (i > 3)
-					{
-						loss -= countLoss(middle, batchInput[i]);
-						//goldList.Add(&finalInputs[i]);
-						goldList.Add(&batchInput[i]);
-					}
-					//XPRINT1(0, stderr, "2%c", ch);
-					if (i < maxLen - 1)
-					{
-						layer0->Recur();
-						if (i > 2)
-						{
-							layer0->getYcopy(finalOutputs[i]);//finalOutpus[i]:batchSize*embSize->batchSize*wordNum
-							finalOutputs[i] = MatrixMul(finalOutputs[i], X_NOTRANS, vec2word, X_NOTRANS);
-							middle = LogSoftmax(finalOutputs[i], 1);
-							finalOutputs[i] = LogSoftmax(finalOutputs[i], 1);
-							outputList.Add(&finalOutputs[i]);
-						}
-					}   
-                        //XPRINT1(0, stderr,"8%c",ch);
-				}
-				this->partClear();
-			}
-			else
-			{
-				/*TO DO*/
-			}
-		}
-		printf("[INFO] validation ppl=%.5f\n", exp(loss / ((float)((maxLen - 4)*useValidation*batchSize))));
-		XPRINT1(0, stderr, "[INFO] validation ppl=%.5f\n",exp(loss / ((float)((maxLen - 4)*useValidation*batchSize))));
-	}
-
-    /**/
-    void test()
-    {
-		XTensor middleInput, finalInput, middle;
-		float loss = 0.0;
-		for (int batchNum = 0; batchNum < dataSize / batchSize; ++batchNum)
-		{
-			goldList.Clear();
-			outputList.Clear();
-			if (loadDataInBatch)getBatchInput(batchNum, batchInput);
-			if (layerNum == 1)
-			{
+				/*iterate hidden unit*/
 				for (int i = 0; i < maxLen; ++i)
 				{
 					if (finalInputs[i].grad != NULL)finalInputs[i].grad->SetZeroAll();//finalInputs[i]:batchSize*embSize
+					/*get input*/
 					if (loadDataInBatch)
 						finalInputs[i] = Sigmoid(MatrixMul(batchInput[i], X_NOTRANS, word2vec, X_NOTRANS));
 					else
@@ -735,10 +665,32 @@ class lstmnet
 					}
 					if (i < maxLen - 1)
 					{
-						layer0->Recur();
+						if (layerNum > 0)
+						{
+							layer0->Recur();
+							layer0->getYcopy(finalOutputs[i]);
+						}
+						if (layerNum > 1)
+						{
+							layer1->setX(finalOutputs[i]);
+							layer1->Recur();
+							layer1->getYcopy(finalOutputs[i]);
+						}
+						if (layerNum > 2)
+						{
+							layer2->setX(finalOutputs[i]);
+							layer2->Recur();
+							layer2->getYcopy(finalOutputs[i]);
+						}
+						if (layerNum > 3)
+						{
+							layer3->setX(finalOutputs[i]);
+							layer3->Recur();
+							layer3->getYcopy(finalOutputs[i]);
+						}
 						if (i > 2)
 						{
-							layer0->getYcopy(finalOutputs[i]);//finalOutpus[i]:batchSize*embSize->batchSize*wordNum
+							//finalOutpus[i]:batchSize*embSize->batchSize*wordNum
 							finalOutputs[i] = MatrixMul(finalOutputs[i], X_NOTRANS, vec2word, X_NOTRANS);
 							middle = LogSoftmax(finalOutputs[i], 1);
 							finalOutputs[i] = LogSoftmax(finalOutputs[i], 1);
@@ -746,26 +698,198 @@ class lstmnet
 						}
 					}
 				}
+				autoDiffer.Backward(outputList, goldList, CROSSENTROPY);
+				this->update();
 				this->partClear();
-			}
-			else
+				loss /= (float)((maxLen - 4)*(batchSize));
+				avgloss += loss;
+				dT = dT*0.9 +(GetClockSec() - startT - nowT)*0.1;
+				nowT = GetClockSec() - startT;
+                XPRINT6(0, stderr, "[INFO]elapsed=%.1fs, epoch=%d, batch=%d/%d, prob=%8.1f, rest=%.1fs\n", nowT, epochNum + 1, batchNum + 1, dataSize / batchSize-useValidation, exp(loss), dT*(dataSize / batchSize - useValidation-batchNum-1));
+				XPRINT5(0, stdout, "[INFO]elapsed=%.1fs, epoch=%d, batch=%d/%d, prob=%.1f\n", nowT, epochNum + 1, batchNum + 1, dataSize / batchSize - useValidation, exp(loss));
+            }
+			XPRINT3(0,stderr,"[INFO] epoch=%d/%d, prob=%.5f\n", epochNum + 1,epochs, exp(avgloss / (dataSize / batchSize-useValidation)));
+			XPRINT3(0, stdout, "[INFO] epoch=%d/%d, prob=%.5f\n", epochNum + 1, epochs, exp(avgloss / (dataSize / batchSize - useValidation)));
+			this->validate();
+			/*save model after every epoch*/
+			this->dump(epochNum + 1);
+			/*check if stop early*/
+			pastloss[epochNum] = exp(avgloss / (dataSize / batchSize - useValidation));
+			if (epochNum > earlyStop)
 			{
-				/*TO DO*/
+				bool nearSame = true;
+				for(int ii=epochNum-earlyStop;ii<=epochNum;++ii)
+					for (int jj = ii + 1; jj < epochNum; ++jj)
+					{
+						if (fabs(pastloss[ii] - pastloss[jj]) > limitForEarlyStop)
+							nearSame = false;
+					}
+				if (nearSame)break;
 			}
+			/*check if the loss is so high that we need retrain*/
+			if (epochNum == 0 && exp(avgloss / (dataSize / batchSize - useValidation)) >= 10000.0)
+			{
+				this->retrain();
+				return;
+			}
+        }
+    }
+	
+	/*validation procedure*/
+	void validate()
+	{
+		XTensor middleInput, finalInput,middle;
+		float loss = 0.0;
+		for (int batchNum = dataSize / batchSize - useValidation; batchNum < dataSize / batchSize; ++batchNum)
+		{
+            goldList.Clear();
+            outputList.Clear();
+			if (loadDataInBatch)getBatchInput(batchNum, batchInput);
+			for (int i = 0; i < maxLen; ++i)
+			{
+				if(finalInputs[i].grad!=NULL)finalInputs[i].grad->SetZeroAll();//finalInputs[i]:batchSize*embSize
+				if(loadDataInBatch)
+					finalInputs[i] = Sigmoid(MatrixMul(batchInput[i], X_NOTRANS, word2vec, X_NOTRANS));
+				else
+					finalInputs[i] = Sigmoid(MatrixMul(input[batchNum][i], X_NOTRANS, word2vec, X_NOTRANS));
+				layer0->setX(finalInputs[i]);
+				if (i > 3)
+				{
+					loss -= countLoss(middle, batchInput[i]);
+					goldList.Add(&batchInput[i]);
+				}
+				if (i < maxLen - 1)
+				{
+					if (layerNum > 0)
+					{
+						layer0->Recur();
+						layer0->getYcopy(finalOutputs[i]);
+					}
+					if (layerNum > 1)
+					{
+						layer1->setX(finalOutputs[i]);
+						layer1->Recur();
+						layer1->getYcopy(finalOutputs[i]);
+					}
+					if (layerNum > 2)
+					{
+						layer2->setX(finalOutputs[i]);
+						layer2->Recur();
+						layer2->getYcopy(finalOutputs[i]);
+					}
+					if (layerNum > 3)
+					{
+						layer3->setX(finalOutputs[i]);
+						layer3->Recur();
+						layer3->getYcopy(finalOutputs[i]);
+					}
+					if (i > 2)
+					{
+						layer0->getYcopy(finalOutputs[i]);//finalOutpus[i]:batchSize*embSize->batchSize*wordNum
+						finalOutputs[i] = MatrixMul(finalOutputs[i], X_NOTRANS, vec2word, X_NOTRANS);
+						middle = LogSoftmax(finalOutputs[i], 1);
+						finalOutputs[i] = LogSoftmax(finalOutputs[i], 1);
+						outputList.Add(&finalOutputs[i]);
+					}
+				}   
+			}
+			this->partClear();
+		}
+		XPRINT1(0, stderr, "[INFO] validation ppl=%.5f\n",exp(loss / ((float)((maxLen - 4)*useValidation*batchSize))));
+		XPRINT1(0, stdout, "[INFO] validation ppl=%.5f\n", exp(loss / ((float)((maxLen - 4)*useValidation*batchSize))));
+	}
+
+    /*test procedure*/
+    void test()
+    {
+		XTensor middleInput, finalInput, middle;
+		float loss = 0.0;
+		for (int batchNum = 0; batchNum < dataSize / batchSize; ++batchNum)
+		{
+			if (loadDataInBatch)getBatchInput(batchNum, batchInput);
+			for (int i = 0; i < maxLen; ++i)
+			{
+				if (finalInputs[i].grad != NULL)finalInputs[i].grad->SetZeroAll();//finalInputs[i]:batchSize*embSize
+				if (loadDataInBatch)
+					finalInputs[i] = Sigmoid(MatrixMul(batchInput[i], X_NOTRANS, word2vec, X_NOTRANS));
+				else
+					finalInputs[i] = Sigmoid(MatrixMul(input[batchNum][i], X_NOTRANS, word2vec, X_NOTRANS));
+				layer0->setX(finalInputs[i]);
+				if (i > 3)
+				{
+					loss -= countLoss(middle, batchInput[i]);
+				}
+				if (i < maxLen - 1)
+				{
+					if (layerNum > 0)
+					{
+						layer0->Recur();
+						layer0->getYcopy(finalOutputs[i]);
+					}
+					if (layerNum > 1)
+					{
+						layer1->setX(finalOutputs[i]);
+						layer1->Recur();
+						layer1->getYcopy(finalOutputs[i]);
+					}
+					if (layerNum > 2)
+					{
+						layer2->setX(finalOutputs[i]);
+						layer2->Recur();
+						layer2->getYcopy(finalOutputs[i]);
+					}
+					if (layerNum > 3)
+					{
+						layer3->setX(finalOutputs[i]);
+						layer3->Recur();
+						layer3->getYcopy(finalOutputs[i]);
+					}
+					if (i > 2)
+					{
+						layer0->getYcopy(finalOutputs[i]);//finalOutpus[i]:batchSize*embSize->batchSize*wordNum
+						finalOutputs[i] = MatrixMul(finalOutputs[i], X_NOTRANS, vec2word, X_NOTRANS);
+						middle = LogSoftmax(finalOutputs[i], 1);
+						finalOutputs[i] = LogSoftmax(finalOutputs[i], 1);
+					}
+				}
+			}
+			this->partClear();
 		}
 		printf("[INFO] test ppl=%.5f\n", exp(loss / ((float)((maxLen - 4)*dataSize / batchSize*batchSize))));
 		XPRINT1(0, stderr, "[INFO] test ppl=%.5f\n", exp(loss / ((float)((maxLen - 4)*dataSize / batchSize*batchSize))));
 	}
 
-    /**/
-    void dump()
+    /*save model*/
+    void dump(int someParam=0,char* modelPath=NULL)
     {
+		if (modelPath == NULL)
+		{
+			modelPath = new char[50];
+			sprintf(modelPath, "model_%d_%d_%d.ckpt", dataSize, batchSize, someParam);
+		}
+		FILE * file = fopen(modelPath, "w+b");
+		layer0->dump(file);
+		word2vec.Dump(file, "word2vec");
+		vec2word.Dump(file, "vec2word");
+		fclose(file);
+		XPRINT(0, stderr, "[INFO] model saved\n");
     }
 
-    /**/
-    void load()
-    {
-    }
+    /*load model*/
+	void read(int someParam = 0,char* modelPath = NULL )
+	{
+		if (modelPath == NULL)
+		{
+			modelPath = new char[50];
+			sprintf(modelPath, "model_%d_%d_%d.ckpt", dataSize, batchSize, someParam);
+		}
+		FILE * file = fopen(modelPath, "r+b");
+		layer0->read(file);
+		word2vec.Read(file, "word2vec");
+		vec2word.Read(file, "vec2word");
+		fclose(file);
+		XPRINT(0, stderr, "[INFO] model loaded\n");
+	}
 };
 
 }; // namespace lstm
