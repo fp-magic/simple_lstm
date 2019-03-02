@@ -1,4 +1,5 @@
 #include"lstm.h"
+#include"model.h"
 #include<string>
 using namespace nts;
 /*parameters:
@@ -21,18 +22,21 @@ using namespace nts;
 **limitEarlyStop:see above one
 **devId:		compute id, 0 for CPU, 1 or other for GPU
 **testPath:		the model loaded when test
+**lrRateUpdateMethod:method of updating learning rate, provide "default","exp","step","inv",call setLearningRate to set, see the description of setLearningRate for details
+**optimizer		method of optimizer, provide "default","momentum","adagrad", call setOptimizer to set, see the description of setOptimizer for details
+**cell			rnn cell type, provide "lstm","gru"
 */
-namespace lstm
+namespace rnn
 {
 	
-	const int sentenceNum = 32768;
+	const int sentenceNum = 30000;
 	const int maxLength = 50;
-	const int minLength = 25;
+	const int minLength = 10;
 	const int embSize = 100;
 	const int wordNum = 10000;
-	const int epochNum = 10;
+	const int epochNum = 20;
 	const int unitNum = 100;
-	const int batchSize = 2;
+	const int batchSize = 256;
 	const float learningRate = 0.00025;
 	const std::string weightInitializer = "rand";
 	const bool loadDataInBatch = true;
@@ -40,21 +44,23 @@ namespace lstm
 	const bool shuffle = true;
 	const int testsentenceNum = 2560;
 	const std::string infoPath = "info.txt";
-	const int layerNum = 1;
+	const int layerNum = 2;
 	const int earlyStop = 3;
 	const float limitEarlyStop = 0.5;
 	const int devId = 2;
-	char testPath[50] = "model_32768_256_10.ckpt";
+	char testPath[50] = "model_30000_256_18.ckpt";
 	const std::string lrRateUpdateMethod = "default";
+	const std::string optimizer = "default";
+	const std::string cell = "lstm";
 	/*
-	const int sentenceNum = 128;
-	const int maxLength = 32;
+	const int sentenceNum = 512;
+	const int maxLength = 20;
 	const int minLength = 1;
-	const int embSize = 32;
+	const int embSize = 20;
 	const int wordNum = 10000;
-	const int epochNum = 2;
-	const int unitNum = 32;
-	const int batchSize = 1;
+	const int epochNum = 10;
+	const int unitNum = 25;
+	const int batchSize = 32;
 	const float learningRate = 0.001;
 	const std::string weightInitializer = "rand";
 	const bool loadDataInBatch = true;
@@ -67,18 +73,24 @@ namespace lstm
 	const float limitEarlyStop = 0.5;
 	const int devId = 1;
 	char testPath[50] = "model_1024_128_2.ckpt";
+	const std::string lrRateUpdateMethod = "default";
+	const std::string optimizer = "default";
+	const std::string cell = "lstm";
 	*/
 	/*train*/
 	void trueMain()
 	{
 		printf("train begin\n");
 		/*initialize a lstmnet*/
+
 		lstmnet testLstmnet(devId, wordNum, unitNum, embSize, epochNum, batchSize, learningRate, weightInitializer, loadDataInBatch, amountForValidation, shuffle, infoPath,layerNum);
 		/*use setBatchInput to set data when load data into batch size, else use setInput*/
 		//testLstmnet.setInput("wsj-00-20.id.vocab10k", sentenceNum,minLength,maxLength);
 		testLstmnet.setBatchInput("wsj-00-20.id.vocab10k", sentenceNum, minLength, maxLength, false);
 		/*use setLearningRate to change learning rate online*/
 		testLstmnet.setLearningRate("lrRateUpdateMethod", 0.9, 50.0);
+		/*use setOptimizer to set optimizer*/
+		testLstmnet.setOptimizer(optimizer);
 		/*use setStop to set early stop parameters*/
 		testLstmnet.setStop(earlyStop, limitEarlyStop);
 		printf("data and parameter set, train begin\n");
@@ -102,10 +114,24 @@ namespace lstm
 		testLstmnet.test();
 	};
 }
+namespace onemodel{
+	void fakeMain()
+	{
+		Model model(1, 5, 0.001);
+		model.AddInput("1data.txt", 25, 32, 2);
+		model.AddDense(2);
+		model.AddDense(2);
+		model.AddDense(1);
+		model.AddGold("1gold.txt");
+		model.Train(CROSSENTROPY);
+	}
+
+}
 int main(int argc, const char ** argv)
 {
-    lstm::trueMain();
-	//lstm::trueTest();
+    rnn::trueMain();
+	//rnn::trueTest();
+	//onemodel::fakeMain();
     return 0;
 }
 
